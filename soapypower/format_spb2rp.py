@@ -15,15 +15,25 @@ if sys.platform == 'win32':
 logger = logging.getLogger(__name__)
 
 if __name__ == '__main__':
-    soapypowerbin_file = open(sys.argv[1], mode='rb')
+    #soapypowerbin_file = open(sys.argv[1], mode='rb')
     #rtlpower_file = open(sys.argv[2], mode='w')
     read_check_soapypowerbin_file = open(sys.argv[2], mode='wb')
     #b = writer.BaseWriter()
     s = writer.SoapyPowerBinFormat()
-    header, pwr_array = s.read(soapypowerbin_file)
     r = writer.RtlPowerWriter()
-    #r.write(psd_data_or_future, time_start, time_start, samples)
-    s.write(read_check_soapypowerbin_file, header.time_start, header.time_stop, header.start, header.stop, header.step, header.samples, pwr_array)
+    with open(sys.argv[1], mode='rb') as soapypowerbin_file:
+        while True:
+            c = s.read(soapypowerbin_file)
+            if c == None:
+                break
+            else:
+                header = c[0]
+                pwr_array = c[1]
+
+            #r.write(psd_data_or_future, time_start, time_start, samples)
+            s.write(read_check_soapypowerbin_file, header.time_start, header.time_stop, header.start, header.stop, header.step, header.samples, pwr_array)
+
+    
     read_check_soapypowerbin_file.close()
-    soapypowerbin_file.close()
+    #soapypowerbin_file.close()
     #rtlpower_file.close()
