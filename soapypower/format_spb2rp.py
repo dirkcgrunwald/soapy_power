@@ -29,28 +29,20 @@ def write_rtl_power(f, time_start, time_stop, start, stop, step, samples, pwr_ar
         logging.exception('Error writing to output file:')
 
 if __name__ == '__main__':
-    #soapypowerbin_file = open(sys.argv[1], mode='rb')
-    rtlpower_file = open(sys.argv[2], mode='w')
-    #read_check_soapypowerbin_file = open(sys.argv[2], mode='wb')
-    #b = writer.BaseWriter()
     s = writer.SoapyPowerBinFormat()
-    #r = writer.RtlPowerWriter()
     with open(sys.argv[1], mode='rb') as soapypowerbin_file:
-        while True:
-            c = s.read(soapypowerbin_file)
-            if c == None:
-                break
-            else:
-                header = c[0]
-                pwr_array = c[1]
+        with open(sys.argv[2], mode='w') as rtlpower_file:
+            while True:
+                c = s.read(soapypowerbin_file)
+                if c == None:    # -> Not magic byte, head of 5 byte. -> If format of sopay_power_bin is correct, it is EOF.
+                    break
+                else:
+                    header = c[0]
+                    pwr_array = c[1]
+                
+                time_start = datetime.datetime.fromtimestamp(header.time_start)
+                time_stop = datetime.datetime.fromtimestamp(header.time_stop)
+                write_rtl_power(rtlpower_file, time_start, time_stop, header.start, header.stop, header.step, header.samples, pwr_array)
             
-            #r.write(psd_data_or_future, time_start, time_start, samples)
-            #s.write(read_check_soapypowerbin_file, header.time_start, header.time_stop, header.start, header.stop, header.step, header.samples, pwr_array)
-            time_start = datetime.datetime.fromtimestamp(header.time_start)
-            time_stop = datetime.datetime.fromtimestamp(header.time_stop)
-            write_rtl_power(rtlpower_file, time_start, time_stop, header.start, header.stop, header.step, header.samples, pwr_array)
         
     
-    #read_check_soapypowerbin_file.close()
-    #soapypowerbin_file.close()
-    rtlpower_file.close()
