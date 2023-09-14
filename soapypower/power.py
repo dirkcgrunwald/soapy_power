@@ -252,9 +252,18 @@ class SoapyPower:
             logger.debug('    Repeat: {}'.format(repeat + 1))
             # Read samples from SDR in main thread
             t_acq = time.time()
+
             if repeat == 0:
                 acq_time_start = datetime.datetime.utcnow()
             self.device.read_stream_into_buffer(self._buffer)
+
+            try:
+                self.device.read_stream_into_buffer(self._buffer)
+            except RuntimeError as e:
+                global _shutdown
+                logger.error('      RuntimeError while reading stream: {}'.format(e))
+                _shutdown = True
+
             acq_time_stop = datetime.datetime.utcnow()
             t_acq_end = time.time()
             logger.debug('      Acquisition time: {:.3f} s'.format(t_acq_end - t_acq))
