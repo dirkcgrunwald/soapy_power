@@ -353,8 +353,10 @@ class NatsWriter(io.BytesIO):
             js = nc.jetstream()
             logging.debug("Create stream")
 
-            await js.add_stream(name="sdr",
-                                subjects=["sdr.*"])
+            await js.add_stream(name="sdr-data",
+                                subjects=["sdr-data.*"])
+            
+            subject = f"sdr-data.{self._reporter_id}"
             
             while True:
                 logging.debug(f"consumer waiting at queue - queue size is {self._q.qsize()}")
@@ -389,8 +391,8 @@ class NatsWriter(io.BytesIO):
                         'time' : timestamp(),
                         'format' : self._format,
                         "data" : data } )
-                logging.info(f"publish location {jdata}")
-                await nc.publish("sdr.psd", jdata.encode())
+#                logging.debug(f"publish location {jdata}")
+                await nc.publish(subject, jdata.encode())
                 sys.stdout.flush()
                 self._q.task_done()
         finally:
