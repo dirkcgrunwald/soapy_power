@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys, time, datetime, math, logging, signal, random, os
+import sys, time, datetime, math, logging, signal, random, os, asyncio
 
 import numpy
 import simplesoapy
@@ -281,7 +281,7 @@ class SoapyPower:
 
         return (psd_future, acq_time_start, acq_time_stop)
 
-    def sweep(self, min_freq, max_freq, bins, repeats, runs=0, time_limit=0, overlap=0, random_hops=False,
+    async def sweep(self, min_freq, max_freq, bins, repeats, runs=0, time_limit=0, overlap=0, random_hops=False,
               fft_window='hann', fft_overlap=0.5, crop=False, log_scale=True, remove_dc=False, detrend=None, lnb_lo=0,
               tune_delay=0, reset_stream=False, base_buffer_size=0, max_buffer_size=0, max_threads=0, max_queue_size=0):
         """Sweep spectrum using frequency hopping"""
@@ -311,8 +311,9 @@ class SoapyPower:
                     psd_future, acq_time_start, acq_time_stop = self.psd(freq)
 
                     # Write PSD to stdout (in another thread)
-                    self._writer.write_async(psd_future, acq_time_start, acq_time_stop,
+                    await self._writer.write_async(psd_future, acq_time_start, acq_time_stop,
                                              len(self._buffer) * self._buffer_repeats)
+                    await asyncio.sleep(0)
 
                     if _shutdown:
                         break

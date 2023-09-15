@@ -277,7 +277,7 @@ def setup_argument_parser():
     return parser
 
 
-def main():
+async def main():
     # Parse command line arguments
     parser = setup_argument_parser()
     args = parser.parse_args()
@@ -365,7 +365,7 @@ def main():
         args.fft_window = (args.fft_window, args.fft_window_param)
 
     # Start frequency sweep
-    sdr.sweep(
+    await sdr.sweep(
         args.freq[0], args.freq[1], args.bins, args.repeats,
         runs=args.runs, time_limit=args.elapsed, overlap=args.overlap, crop=args.crop,
         fft_window=args.fft_window, fft_overlap=args.fft_overlap / 100, log_scale=not args.linear,
@@ -377,4 +377,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
