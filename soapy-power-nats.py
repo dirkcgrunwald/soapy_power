@@ -387,7 +387,6 @@ class NatsWriter(io.BytesIO):
                 logging.debug(f"Type is now {type(data)}")
                 
                 jdata = json.dumps( {
-                        'reporter': self._reporter_id,
                         'time' : timestamp(),
                         'format' : self._format,
                         "data" : data } )
