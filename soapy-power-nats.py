@@ -389,7 +389,7 @@ class NatsWriter(io.BytesIO):
                         'time' : timestamp(),
                         'format' : self._format,
                         "data" : data } )
-                logging.debug(f"publish location {jdata}")
+                logging.info(f"publish location {jdata}")
                 await nc.publish("sdr.psd", jdata.encode())
                 sys.stdout.flush()
                 self._q.task_done()
@@ -492,7 +492,7 @@ async def main():
 
 
     async def async_sweep(sdr,args):
-        sdr.sweep(
+        await sdr.sweep(
             args.freq[0], args.freq[1], args.bins, args.repeats,
             runs=args.runs, time_limit=args.elapsed, overlap=args.overlap, crop=args.crop,
             fft_window=args.fft_window, fft_overlap=args.fft_overlap / 100, log_scale=not args.linear,
