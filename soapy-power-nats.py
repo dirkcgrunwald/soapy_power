@@ -2,6 +2,11 @@
 
 import os, sys, logging, argparse, re, shutil, textwrap
 
+import asyncio
+import nats
+from nats.errors import ConnectionClosedError, TimeoutError, NoServersError
+import geocoder, uuid, pytz, datetime, json, io, base64
+
 import simplesoapy
 from soapypower import writer
 from soapypower.version import __version__
@@ -276,8 +281,123 @@ def setup_argument_parser():
 
     return parser
 
+def timestamp():
+    now = datetime.datetime.now(pytz.timezone('UTC'))
+    return now.isoformat()
 
-def main():
+async def getreporter():
+    reporter_id = str(uuid.UUID(int=uuid.getnode()))
+    logger.debug(f"reporter is {reporter_id}")
+    try:
+        logger.debug("Connect to NATS")
+        token = os.getenv("TOKEN")
+        if not token:
+            print("You need to set the TOKEN environment variable to your NATS token")
+            sys.exit(1)
+        
+        mygeo  = geocoder.ip('me')
+        mylat, mylong = mygeo.latlng
+        logger.debug(f"got {mylat}, {mylong}")
+
+        nc = await nats.connect(f"nats://{token}@198.59.70.45:8080")
+        logger.debug("Create jetstream")
+        js = nc.jetstream()
+        logger.debug("Create key value")
+        kv = await js.create_key_value(bucket="reporters")
+
+        jdata = json.dumps( {
+            'reporter' : reporter_id,
+            'time' : timestamp(),
+            'lat' : mylat,
+            'long' : mylong
+            })
+        logger.debug(f"Introduce reporter location as {jdata}")
+        await kv.put(reporter_id, jdata.encode())
+        return reporter_id
+    except Exception as exp:
+        logger.debug(f"Exception in getreportr: {exp}")
+        return None
+
+class NatsWriter(io.BytesIO):
+
+    def __init__(self, reporter_id, format):
+        super().__init__()
+        self._q = asyncio.Queue()
+        self._reporter_id = reporter_id
+        self._format = format
+    
+    def flush(self):
+        view = self.getvalue()
+        self._q.put_nowait( view )
+        self.seek(0)
+        self.truncate(0)
+        
+    def set_consumer(self, consumer_task):
+        self._consumer = consumer_task
+        
+    def join(self):
+        logging.debug(f"NatsWriter join queue")
+        self._q.join()
+        
+    async def consumer(self):
+        nc = None
+        try:
+            logging.debug("Connect to NATS")
+            token = os.getenv("TOKEN")
+            if not token:
+                logging.info("You need to set the TOKEN environment variable to your NATS token")
+                sys.exit(1)
+
+            nc = await nats.connect(f"nats://{token}@198.59.70.45:8080")
+            logging.debug("Create jetstream")
+            js = nc.jetstream()
+            logging.debug("Create stream")
+
+            await js.add_stream(name="sdr",
+                                subjects=["sdr.*"])
+            
+            while True:
+                logging.debug(f"consumer waiting at queue - queue size is {self._q.qsize()}")
+                data = await self._q.get()
+                logging.debug(f"data is of type {type(data)}")
+                if len(data) == 0:
+                    return
+
+                if type(data) is memoryview :
+                    logging.debug(f"Convert memoryview to bytes")
+                    data = data.tobytes()
+                    logging.debug(f"Type is now {type(data)}")
+
+                logging.debug(f"Data is {data}")
+
+                if type(data) is bytes:
+                    try:
+                        strdata = data.decode('utf-8')
+                        if strdata.find('\n'):
+                            logging.debug(f"Data looks like a string")
+                            data = strdata
+                        else:
+                            logging.debug(f"Data is not string so base64 encode")
+                            data = base64.b64encode(data)
+                    except UnicodeDecodeError:
+                            logging.debug(f"Data can not utf-8 decode so base64 encode")
+                            data = base64.b64encode(data).decode('utf-8')
+                logging.debug(f"Type is now {type(data)}")
+                
+                jdata = json.dumps( {
+                        'reporter': self._reporter_id,
+                        'time' : timestamp(),
+                        'format' : self._format,
+                        "data" : data } )
+                logging.debug(f"publish location {jdata}")
+                await nc.publish("sdr.psd", jdata.encode())
+                sys.stdout.flush()
+                self._q.task_done()
+        finally:
+            if nc:
+                await nc.drain()
+
+async def main():
     # Parse command line arguments
     parser = setup_argument_parser()
     args = parser.parse_args()
@@ -314,6 +434,11 @@ def main():
     if args.no_pyfftw:
         power.psd.simplespectral.use_pyfftw = False
 
+    reporter_id = await getreporter()
+
+    nats_writer = NatsWriter(reporter_id, args.format)
+    nats_io = nats_writer
+
     # Create SoapyPower instance
     try:
         sdr = power.SoapyPower(
@@ -321,7 +446,8 @@ def main():
             gain=args.specific_gains if args.specific_gains else args.gain, auto_gain=args.agc,
             channel=args.channel, antenna=args.antenna, settings=args.device_settings,
             force_sample_rate=args.force_rate, force_bandwidth=args.force_bandwidth,
-            output=args.output_fd if args.output_fd is not None else args.output,
+#            output=args.output_fd if args.output_fd is not None else args.output,
+            output=nats_writer,
             output_format=args.format
         )
         logger.info('Using device: {}'.format(sdr.device.hardware))
@@ -364,17 +490,26 @@ def main():
             parser.error('argument --fft-window: --fft-window-param is required when using kaiser or tukey windows')
         args.fft_window = (args.fft_window, args.fft_window_param)
 
+
+    async def async_sweep(sdr,args):
+        sdr.sweep(
+            args.freq[0], args.freq[1], args.bins, args.repeats,
+            runs=args.runs, time_limit=args.elapsed, overlap=args.overlap, crop=args.crop,
+            fft_window=args.fft_window, fft_overlap=args.fft_overlap / 100, log_scale=not args.linear,
+            remove_dc=args.remove_dc, detrend=args.detrend if args.detrend != 'none' else None,
+            lnb_lo=args.lnb_lo, tune_delay=args.tune_delay, reset_stream=args.reset_stream,
+            base_buffer_size=args.buffer_size, max_buffer_size=args.max_buffer_size,
+            max_threads=args.max_threads, max_queue_size=args.max_queue_size, random_hops=args.random
+        )
+    
     # Start frequency sweep
-    sdr.sweep(
-        args.freq[0], args.freq[1], args.bins, args.repeats,
-        runs=args.runs, time_limit=args.elapsed, overlap=args.overlap, crop=args.crop,
-        fft_window=args.fft_window, fft_overlap=args.fft_overlap / 100, log_scale=not args.linear,
-        remove_dc=args.remove_dc, detrend=args.detrend if args.detrend != 'none' else None,
-        lnb_lo=args.lnb_lo, tune_delay=args.tune_delay, reset_stream=args.reset_stream,
-        base_buffer_size=args.buffer_size, max_buffer_size=args.max_buffer_size,
-        max_threads=args.max_threads, max_queue_size=args.max_queue_size, random_hops=args.random
-    )
+    producer = asyncio.create_task( async_sweep (sdr, args) )
+    consumer_coroutine = asyncio.create_task( nats_io.consumer() )
+    nats_io.set_consumer( consumer_coroutine )
+    await asyncio.gather(producer)
+    await asyncio.gather(consumer_coroutine)
+    nats_io.close()
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
